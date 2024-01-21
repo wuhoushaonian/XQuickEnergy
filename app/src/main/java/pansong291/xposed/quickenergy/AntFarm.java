@@ -1,6 +1,7 @@
 package pansong291.xposed.quickenergy;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 import pansong291.xposed.quickenergy.hook.AntFarmRpcCall;
 import pansong291.xposed.quickenergy.util.*;
@@ -53,9 +54,9 @@ public class AntFarm {
     }
 
     public enum GameType {
-        starGame, jumpGame;
+        starGame, jumpGame, flyGame;
 
-        public static final CharSequence[] gameNames = { "星星球", "登山赛" };
+        public static final CharSequence[] gameNames = { "星星球", "登山赛", "飞行赛" };
 
         public CharSequence gameName() {
             return gameNames[ordinal()];
@@ -120,12 +121,12 @@ public class AntFarm {
             @Override
             public void run() {
                 try {
-                    while (FriendIdMap.currentUid == null || FriendIdMap.currentUid.isEmpty())
+                    while (FriendIdMap.getCurrentUid() == null || FriendIdMap.getCurrentUid().isEmpty())
                         Thread.sleep(100);
-                    String s = AntFarmRpcCall.enterFarm("", FriendIdMap.currentUid);
+                    String s = AntFarmRpcCall.enterFarm("", FriendIdMap.getCurrentUid());
                     if (s == null) {
                         Thread.sleep(RandomUtils.delay());
-                        s = AntFarmRpcCall.enterFarm("", FriendIdMap.currentUid);
+                        s = AntFarmRpcCall.enterFarm("", FriendIdMap.getCurrentUid());
                     }
                     JSONObject jo = new JSONObject(s);
                     if ("SUCCESS".equals(jo.getString("memo"))) {
@@ -227,6 +228,7 @@ public class AntFarm {
                     }
 
                     if (Config.recordFarmGame() && Config.isFarmGameTime()) {
+                        recordFarmGame(GameType.flyGame);
                         recordFarmGame(GameType.starGame);
                         recordFarmGame(GameType.jumpGame);
                     }
@@ -255,7 +257,7 @@ public class AntFarm {
                         donation();
                     }
 
-                    if (Config.answerQuestion() && Statistics.canAnswerQuestionToday(FriendIdMap.currentUid)) {
+                    if (Config.answerQuestion() && Statistics.canAnswerQuestionToday(FriendIdMap.getCurrentUid())) {
                         answerQuestion();
                     }
 
@@ -290,6 +292,8 @@ public class AntFarm {
                     // 送麦子
                     visit();
 
+                    visitAnimal();
+
                     // 帮好友喂鸡
                     feedFriend();
 
@@ -315,9 +319,58 @@ public class AntFarm {
 
     }
 
+    private static void visitAnimal() {
+        try {
+            String s = AntFarmRpcCall.visitAnimal();
+            JSONObject jo = new JSONObject(s);
+            if ("SUCCESS".equals(jo.getString("memo"))) {
+                JSONArray talkNodes = jo.getJSONArray("talkNodes");
+                for (int i = 0; i < talkNodes.length(); i++) {
+                    JSONObject talkNode = talkNodes.getJSONObject(i);
+                    if (talkNode.has("actionNodes")) {
+                        JSONArray actionNodes = talkNode.getJSONArray("actionNodes");
+                        for (int j = 0; j < actionNodes.length(); j++) {
+                            JSONObject actionNode = actionNodes.getJSONObject(j);
+                            if (actionNode.has("consistencyKey")) {
+                                String consistencyKey = actionNode.getString("consistencyKey");
+
+                                JSONObject talkConfig = jo.getJSONArray("talkConfigs").getJSONObject(0);
+                                String farmId = talkConfig.getString("farmId");
+                                s = AntFarmRpcCall.feedFriendAnimalVisit(farmId);
+                                jo = new JSONObject(s);
+                                if ("SUCCESS".equals(jo.getString("memo"))) {
+                                    s = AntFarmRpcCall.visitAnimalSendPrize(consistencyKey);
+                                    jo = new JSONObject(s);
+                                    if ("SUCCESS".equals(jo.getString("memo"))) {
+                                        String prizeName = jo.getString("prizeName");
+                                        Log.farm("小鸡到访🍖" + prizeName);
+                                    } else {
+                                        Log.i(TAG, "visitAnimalSendPrize err:" + s);
+                                        Log.i(TAG, s);
+                                    }
+                                } else {
+                                    Log.i(TAG, "feedFriendAnimalVisit err:" + s);
+                                    Log.i(TAG, s);
+                                }
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
+            } else {
+                Log.i(TAG, "visitAnimal err:" + s);
+                Log.i(TAG, s);
+            }
+        } catch (Throwable t) {
+            Log.i(TAG, "sleep err:");
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
     private static void animalSleep() {
         try {
-            String s = AntFarmRpcCall.queryLoveCabin(FriendIdMap.currentUid);
+            String s = AntFarmRpcCall.queryLoveCabin(FriendIdMap.getCurrentUid());
             JSONObject jo = new JSONObject(s);
             if ("SUCCESS".equals(jo.getString("memo"))) {
                 JSONObject sleepNotifyInfo = jo.getJSONObject("sleepNotifyInfo");
@@ -621,7 +674,7 @@ public class AntFarm {
                                         }
                                         Log.recordLog("答题" + (correct ? "正确" : "错误") + "可领取［"
                                                 + extInfo.getString("award") + "克］");
-                                        Statistics.answerQuestionToday(FriendIdMap.currentUid);
+                                        Statistics.answerQuestionToday(FriendIdMap.getCurrentUid());
 
                                         JSONArray operationConfigList = joDailySubmit
                                                 .getJSONArray("operationConfigList");
@@ -652,13 +705,13 @@ public class AntFarm {
                             case RECEIVED:
                                 Statistics.setQuestionHint(null);
                                 Log.recordLog("今日答题已完成", "");
-                                Statistics.answerQuestionToday(FriendIdMap.currentUid);
+                                Statistics.answerQuestionToday(FriendIdMap.getCurrentUid());
                                 break;
 
                             case FINISHED:
                                 Statistics.setQuestionHint(null);
                                 Log.recordLog("已经答过题了，饲料待领取", "");
-                                Statistics.answerQuestionToday(FriendIdMap.currentUid);
+                                Statistics.answerQuestionToday(FriendIdMap.getCurrentUid());
                                 break;
                         }
                         break;
@@ -677,9 +730,12 @@ public class AntFarm {
         try {
             JSONObject jo = new JSONObject(AntFarmRpcCall.initFarmGame(gameType.name()));
             if ("SUCCESS".equals(jo.getString("memo"))) {
-                JSONObject gameAward = jo.getJSONObject("gameAward");
-                if (gameAward.getBoolean("level3Get"))
+                if (jo.getJSONObject("gameAward").getBoolean("level3Get")) {
                     return;
+                }
+                if (jo.optInt("remainingGameCount", 1) == 0) {
+                    return;
+                }
                 jo = new JSONObject(AntFarmRpcCall.recordFarmGame(gameType.name()));
                 if ("SUCCESS".equals(jo.getString("memo"))) {
                     JSONArray awardInfos = jo.getJSONArray("awardInfos");
@@ -688,7 +744,13 @@ public class AntFarm {
                         jo = awardInfos.getJSONObject(i);
                         award.append(jo.getString("awardName")).append("*").append(jo.getInt("awardCount"));
                     }
+                    if (jo.has("receiveFoodCount")) {
+                        award.append(";肥料*").append(jo.getString("receiveFoodCount"));
+                    }
                     Log.farm("庄园游戏🎮[" + gameType.gameName() + "]#" + award);
+                    if (jo.optInt("remainingGameCount", 0) > 0) {
+                        recordFarmGame(gameType);
+                    }
                 } else {
                     Log.i(TAG, jo.toString());
                 }
@@ -924,7 +986,7 @@ public class AntFarm {
             JSONObject jo;
             for (int i = 0; i < Config.getFeedFriendAnimalList().size(); i++) {
                 String userId = Config.getFeedFriendAnimalList().get(i);
-                if (userId.equals(FriendIdMap.currentUid))
+                if (userId.equals(FriendIdMap.getCurrentUid()))
                     continue;
                 if (!Statistics.canFeedFriendToday(userId, Config.getFeedFriendCountList().get(i)))
                     continue;
@@ -1009,7 +1071,7 @@ public class AntFarm {
                         String userId = jo.getString("userId");
                         String userName = FriendIdMap.getNameById(userId);
                         if (Config.getDontNotifyFriendList().contains(userId)
-                                || userId.equals(FriendIdMap.currentUid))
+                                || userId.equals(FriendIdMap.getCurrentUid()))
                             continue;
                         boolean starve = jo.has("actionType") && "starve_action".equals(jo.getString("actionType"));
                         if (jo.getBoolean("stealingAnimal") && !starve) {
@@ -1307,11 +1369,9 @@ public class AntFarm {
 
     private static void visit() {
         try {
-            String s, memo;
-            JSONObject jo;
             for (int i = 0; i < Config.getVisitFriendList().size(); i++) {
                 String userId = Config.getVisitFriendList().get(i);
-                if (userId.equals(FriendIdMap.currentUid))
+                if (userId.equals(FriendIdMap.getCurrentUid()))
                     continue;
                 int visitCount = Config.getVisitFriendCountList().get(i);
                 if (visitCount <= 0)
@@ -1386,27 +1446,34 @@ public class AntFarm {
         }
     }
 
+    private static void diaryTietie(String queryDayStr, String roleId) throws JSONException {
+        JSONObject jo = new JSONObject(AntFarmRpcCall.diaryTietie(queryDayStr, roleId));
+        if ("SUCCESS".equals(jo.getString("memo"))) {
+            String prizeType = jo.getString("prizeType");
+            int prizeNum = jo.optInt("prizeNum", 0);
+            Log.farm("贴贴小鸡💞[" + prizeType + "*" + prizeNum + "]");
+        } else {
+            Log.i(jo.getString("memo"), jo.toString());
+        }
+    }
+
     private static void queryChickenDiary(String queryDayStr) {
         try {
             JSONObject jo = new JSONObject(AntFarmRpcCall.queryChickenDiary(queryDayStr));
             if ("SUCCESS".equals(jo.getString("resultCode"))) {
+                if (!jo.getBoolean("hasTietie")) {
+                    diaryTietie(queryDayStr, "NEW");
+                    return;
+                }
                 JSONObject chickenDiary = jo.getJSONObject("data").getJSONObject("chickenDiary");
-                String diaryDateStr = chickenDiary.getString("diaryDateStr");
                 if (!chickenDiary.has("tietieStatus"))
                     return;
                 JSONObject tietieStatus = chickenDiary.getJSONObject("tietieStatus");
-                Iterator it = tietieStatus.keys();
+                Iterator<String> it = tietieStatus.keys();
                 while (it.hasNext()) {
-                    String key = (String) it.next();
+                    String key = it.next();
                     if (tietieStatus.optBoolean(key, false)) {
-                        jo = new JSONObject(AntFarmRpcCall.diaryTietie(diaryDateStr, key));
-                        if ("SUCCESS".equals(jo.getString("memo"))) {
-                            String prizeType = jo.getString("prizeType");
-                            int prizeNum = jo.optInt("prizeNum", 0);
-                            Log.farm("贴贴小鸡💞[" + prizeType + "*" + prizeNum + "]");
-                        } else {
-                            Log.i(jo.getString("memo"), jo.toString());
-                        }
+                        diaryTietie(queryDayStr, key);
                     }
                 }
             } else {

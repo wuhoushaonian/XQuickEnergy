@@ -20,15 +20,15 @@ public class AntMember {
             @Override
             public void run() {
                 try {
-                    while (FriendIdMap.currentUid == null || FriendIdMap.currentUid.isEmpty())
+                    while (FriendIdMap.getCurrentUid() == null || FriendIdMap.getCurrentUid().isEmpty())
                         Thread.sleep(100);
-                    if (Statistics.canMemberSignInToday(FriendIdMap.currentUid)) {
-                        String s = AntMemberRpcCall.memberSignIn();
+                    if (Statistics.canMemberSignInToday(FriendIdMap.getCurrentUid())) {
+                        String s = AntMemberRpcCall.queryMemberSigninCalendar();
                         JSONObject jo = new JSONObject(s);
                         if ("SUCCESS".equals(jo.getString("resultCode"))) {
                             Log.other("每日签到📅[" + jo.getString("signinPoint") + "积分]#已签到" + jo.getString("signinSumDay")
                                     + "天");
-                            Statistics.memberSignInToday(FriendIdMap.currentUid);
+                            Statistics.memberSignInToday(FriendIdMap.getCurrentUid());
                         } else {
                             Log.recordLog(jo.getString("resultDesc"), s);
                         }
